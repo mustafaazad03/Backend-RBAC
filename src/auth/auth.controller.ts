@@ -1,10 +1,12 @@
-import { Controller, Post, Body, UseGuards, Get, Req } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, Req, Res, Query } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Role } from '../common/enums/role.enum';
 import { Roles } from 'src/common/decorators/role.decorator';
 import { RolesGuard } from './guard/role.guard';
+import { getGoogleAuthorizationRoute } from './utils/google';
+import { Response } from 'express';
 
 @Controller('auth')
 export class AuthController {
@@ -55,4 +57,32 @@ export class AuthController {
   maintainerRoute() {
     return { message: 'Maintainer access granted' };
   }
+
+  // Additional Optional Task
+	@Public()
+  @Get("google/redirectUrl")
+	async googleAuth(@Res() res: Response){
+		const redirectUrl = await getGoogleAuthorizationRoute();
+		return res.json({
+      success: true,
+      data: redirectUrl,
+      statusCode: 200
+    });
+	}
+
+	@Public()
+	@Get("google/callback")
+	async googleCallback(
+		@Req() req: Request,
+		@Res() res: Response,
+		@Query("code") code: string,
+	) {
+    const generatedTokens = await this.authService.googleLogin(code);
+    await res.cookie("auth", generatedTokens.data, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
+    });
+    return res.redirect(process.env.CLIENT_URL);
+	}
 }

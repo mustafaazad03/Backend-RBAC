@@ -6,6 +6,9 @@ import * as bcrypt from 'bcrypt';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 import { User } from 'src/user/entities/user.entity';
 import { Role } from 'src/common/enums/role.enum';
+import { google } from 'googleapis';
+import { getUserDetailFromIdToken } from './utils/google';
+import * as jwt from 'jsonwebtoken';
 
 @Injectable()
 export class AuthService {
@@ -137,5 +140,75 @@ export class AuthService {
     await this.userRepository.update(userId, {
       refreshToken: hashedRefreshToken,
     });
+  }
+
+  // Optional Task for Google Auth
+  async googleLogin(googleIdToken: string) {
+    const callbackUrl = `${process.env.BACKEND_URL}/auth/google/callback`
+		const oauth2Client = new google.auth.OAuth2(
+			process.env.GOOGLE_CLIENT_ID,
+			process.env.GOOGLE_CLIENT_SECRET,
+			callbackUrl
+		);
+		const codeResponse = await oauth2Client.getToken(googleIdToken);
+		const { tokens } = codeResponse;
+		const { id_token } = tokens;
+		if (!id_token) {
+			throw new BadRequestException("No id_token found");
+		}
+		const userDetails = await getUserDetailFromIdToken(id_token);
+		if (!userDetails) {
+			throw new UnauthorizedException("Invalid user details");
+		}
+		const existingUserEntity = await this.userRepository.findOne({
+			where: { email: userDetails.email },
+		});
+
+		if (existingUserEntity) {
+      const jwtToken = jwt.sign(
+        {
+          id: existingUserEntity.id,
+          email: existingUserEntity.email,
+          role: existingUserEntity.role,
+        },
+        process.env.JWT_SECRET,
+        {
+          expiresIn: '60d',
+        },
+      );
+      return {
+        success: true,
+        message: 'Logged in successfully',
+        statusCode: 200,
+        data: jwtToken
+      }
+		}
+		// Convert existingUser object to simple object
+		const simpleExistingUserObject = {
+			email: userDetails.email,
+      role: Role.USER,
+      password: null
+		};
+
+    const newUserEntity = this.userRepository.create(simpleExistingUserObject);
+    await this.userRepository.save(newUserEntity);
+
+    const jwtToken = jwt.sign(
+      {
+        id: newUserEntity.id,
+        email: newUserEntity.email,
+        role: newUserEntity.role,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: '60d',
+      },
+    );
+    return {
+      success: true,
+      message: 'Logged in successfully',
+      statusCode: 200,
+      data: jwtToken
+    }
   }
 }
